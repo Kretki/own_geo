@@ -4,26 +4,35 @@
 #include <string>
 #include <cmath>
 #include <stdexcept>
+#include <numbers>
 
 namespace geo {
 
     inline constexpr double EARTH_RADIUS = 6371007.2;
-    inline constexpr double PI = 3.141592653589793;
+    inline constexpr double PI = std::numbers::pi;
+    inline constexpr double a  = 6378137.0;
+    inline constexpr double f  = 1.0 / 298.257223563;
+    inline constexpr double b  = a * (1.0 - f);
+    inline constexpr double e2 = f * (2.0 - f);
 
     class GeoPoint {
-        /// @brief WGS84 координаты
+        /// @brief WGS84 и ECEF координаты
     public:
         GeoPoint() : lat(0.0), lon(0.0), alt(0.0) {};
-        GeoPoint(double latitude, double longitude, double altitude) {
-            setLat(latitude);
-            setLon(longitude);
-            setAlt(altitude);
+        static GeoPoint fromWGS(double latitude, double longitude, double altitude) {
+            auto p = GeoPoint();
+            p.setWGS(latitude, longitude, altitude);
+            return p;
         };
-        double operator-(const GeoPoint& other) const {
-            //Перенести в другой оператор, а здесь сделать смещение вектора
-            return distanceTo(other);
+        static GeoPoint fromECEF(double X, double Y, double Z) {
+            auto p = GeoPoint();
+            p.setECEF(X, Y, Z);
+            return p;
         }
 
+        GeoPoint operator-(const GeoPoint& other) const {
+            return GeoPoint::fromECEF(this->X - other.X, this->Y - other.Y, this->Z - other.Z);
+        }
         bool operator==(const GeoPoint& other) const {
             constexpr double latLonEps = 1e-6;
             constexpr double altEps = 1e-4;
@@ -31,38 +40,86 @@ namespace geo {
                 (std::abs(lon - other.lon) < latLonEps) &&
                 (std::abs(alt - other.alt) < altEps);
         }
-
         bool operator!=(const GeoPoint& other) const {
             return !(*this == other);
         }
         
         void setLat(double latitude) { 
             if (std::abs(latitude) > 90.0) throw std::invalid_argument("Latitude out of range");
-            lat = latitude; 
+            lat = latitude;
+            this->fillECEF();
         }
-
         void setLon(double longitude) { 
             if (std::abs(longitude) > 180.0) throw std::invalid_argument("Longitude out of range");
-            lon = longitude; 
+            lon = longitude;
+            this->fillECEF();
+        }
+        void setAlt(double altitude) {
+            alt = altitude;
+            this->fillECEF();
+        }
+        void setWGS(double latitude, double longitude, double altitude) {
+            if (std::abs(latitude) > 90.0) throw std::invalid_argument("Latitude out of range");
+            if (std::abs(longitude) > 180.0) throw std::invalid_argument("Longitude out of range");
+            lon = longitude;
+            lat = latitude;
+            alt = altitude;
+            this->fillECEF();
         }
 
-        void setAlt(double altitude) { 
-            if (altitude < 0.0) throw std::invalid_argument("Altitude out of range");
-            alt = altitude; 
+        void setX(double X) { this->X = X; fillWGS(); }
+        void setY(double Y) { this->Y = Y; fillWGS(); }
+        void setZ(double Z) { this->Z = Z; fillWGS(); }
+        void setECEF(double X, double Y, double Z) {
+            this->X = X;
+            this->Y = Y;
+            this->Z = Z;
+            this->fillWGS();
         }
 
         double getLat() const { return lat; }
         double getLon() const { return lon; }
         double getAlt() const { return alt; }
+        double getX() const { return X; }
+        double getY() const { return Y; }
+        double getZ() const { return Z; }
+
+        double distanceTo(const GeoPoint& other) const {
+            double horizontal = haversineDistance(other);
+            double vertical = other.alt - alt;
+            return std::sqrt(horizontal * horizontal + vertical * vertical);
+        }
     private:
-        double lat, lon, alt;
+        //WGS84 coords
+        double lat, lon, alt; 
+        //Geocentric coords
+        double X, Y, Z;
 
         static double toRadians(double degrees) {
             return degrees * PI / 180.0;
         }
-
         static double toDegrees(double radians) {
             return radians * 180.0 / PI;
+        }
+
+        double fillECEF() {
+            const double sinLat = std::sin(toRadians(this->lat));
+            const double cosLat = std::cos(toRadians(this->lat));
+            const double sinLon = std::sin(toRadians(this->lon));
+            const double cosLon = std::cos(toRadians(this->lon));
+            const double N = a / std::sqrt(1.0 - e2 * sinLat * sinLat);
+            this->X = (N + this->alt) * cosLat * cosLon;
+            this->Y = (N + this->alt) * cosLat * sinLon;
+            this->Z = (N * (1.0 - e2) + this->alt) * sinLat;
+        }
+        double fillWGS() {
+            this->lon = toDegrees(std::atan2(this->Y, this->X));
+            const double p = std::sqrt(this->X * this->X + this->Y * this->Y);
+            if (p < 1e-9) {
+                this->lat = toDegrees((this->Z >= 0.0) ? (std::acos(-1.0) * 0.5)
+                                                       : (std::acos(-1.0) * 0.5));
+                this->alt = std::fabs(this->Z) - b;
+            }
         }
 
         double haversineDistance(const GeoPoint& other) const {
@@ -83,12 +140,6 @@ namespace geo {
             double c = 2.0 * std::atan2(std::sqrt(a), std::sqrt(1.0 - a));
             return EARTH_RADIUS * c;
         }
-
-        double distanceTo(const GeoPoint& other) const {
-            double horizontal = haversineDistance(other);
-            double vertical = other.alt - alt;
-            return std::sqrt(horizontal * horizontal + vertical * vertical);
-        }
     };
 
     class GeoLineString {
@@ -103,7 +154,7 @@ namespace geo {
             double dist = 0.0;
 
             for (size_t i = 1; i < points.size(); ++i) {
-                dist = dist + (points[i] - points[i - 1]);
+                dist = dist + points[i].distanceTo(points[i - 1]);
             }
             return dist;
         };
