@@ -20,9 +20,9 @@ namespace geo {
         /// @brief WGS84 и ECEF координаты
         /// @concept Одновременное вычисление ECEF и WGS84 координат позволяет избежать больших пересчетов
     public:
-        GeoPoint() {
+        GeoPoint() : _lat(0.0), _lon(0.0), _alt(0.0), _X(0.0), _Y(0.0), _Z(0.0) {
             /// @brief Основной конструктор - по-умолчанию
-            setWGS(0.0, 0.0, 0.0); 
+            fillECEF();
         };
         static GeoPoint fromWGS(double latitude, double longitude, double altitude) {
             /// @brief Создание по WGS84 с автоматическим заполнением ECEF
@@ -74,6 +74,7 @@ namespace geo {
             _lat = latitude;
             _alt = altitude;
             //После изменения всех WGS заполняем ECEF
+            //TODO Найти вариант как сделать это преобразование атомарным, чтобы оно не было долгим
             fillECEF();
         }
 
@@ -97,54 +98,10 @@ namespace geo {
 
         double distanceTo(const GeoPoint& other) const {
             /// @brief Расстояние по WGS84
+            //TODO Винценти - тяжелый алгоритм, нужно найти полегче для быстрого рендера
             double horizontal = vincentyDistance(other);
             double vertical = other._alt - _alt;
             return std::sqrt(horizontal * horizontal + vertical * vertical);
-        }
-    private:
-        //WGS84 coords
-        double _lat, _lon, _alt; 
-        //Geocentric coords
-        double _X, _Y, _Z;
-
-        static double toRadians(double degrees) {
-            return degrees * PI / 180.0;
-        }
-        static double toDegrees(double radians) {
-            return radians * 180.0 / PI;
-        }
-
-        void fillECEF() {
-            /// @brief Заполнение ECEF после изменения WGS84
-            const double sinLat = std::sin(toRadians(_lat));
-            const double cosLat = std::cos(toRadians(_lat));
-            const double sinLon = std::sin(toRadians(_lon));
-            const double cosLon = std::cos(toRadians(_lon));
-            const double N = a / std::sqrt(1.0 - e2 * sinLat * sinLat);
-            _X = (N + _alt) * cosLat * cosLon;
-            _Y = (N + _alt) * cosLat * sinLon;
-            _Z = (N * (1.0 - e2) + _alt) * sinLat;
-        }
-        void fillWGS() {
-            /// @brief Заполнение WGS84 после изменения ECEF
-            _lon = toDegrees(std::atan2(_Y, _X));
-            const double p = std::sqrt(_X * _X + _Y * _Y);
-            if (p < wgsEps) {
-                _lat = toDegrees((_Z >= 0.0) ? 90.0 : -90.0);
-                _alt = std::fabs(_Z) - b;
-            }
-            else {
-                _lat = std::atan2(_Z, p * (1.0 - e2));
-                _alt = 0.0;
-                for (int i = 0; i < 10; ++i) {
-                    const double sinLat = std::sin(toRadians(_lat));
-                    const double N = a / std::sqrt(1.0 - e2 * sinLat * sinLat);
-                    _alt = p / std::cos(_lat) - N;
-                    const double newLat = std::atan((_Z / p) / (1.0 - e2 * N / (N + _alt)));
-                    if (std::abs(newLat - _lat) < wgsEps) break;
-                    _lat = newLat;
-                }
-            }
         }
 
         double vincentyDistance(const GeoPoint& other) const {
@@ -215,6 +172,52 @@ namespace geo {
 
             double s = b * A * (sigma - deltaSigma);
             return s;
+        }
+
+    private:
+        //WGS84 coords
+        double _lat, _lon, _alt; 
+        //Geocentric coords
+        double _X, _Y, _Z;
+
+        static double toRadians(double degrees) {
+            return degrees * PI / 180.0;
+        }
+        static double toDegrees(double radians) {
+            return radians * 180.0 / PI;
+        }
+
+        void fillECEF() {
+            /// @brief Заполнение ECEF после изменения WGS84
+            const double sinLat = std::sin(toRadians(_lat));
+            const double cosLat = std::cos(toRadians(_lat));
+            const double sinLon = std::sin(toRadians(_lon));
+            const double cosLon = std::cos(toRadians(_lon));
+            const double N = a / std::sqrt(1.0 - e2 * sinLat * sinLat);
+            _X = (N + _alt) * cosLat * cosLon;
+            _Y = (N + _alt) * cosLat * sinLon;
+            _Z = (N * (1.0 - e2) + _alt) * sinLat;
+        }
+        void fillWGS() {
+            /// @brief Заполнение WGS84 после изменения ECEF
+            _lon = toDegrees(std::atan2(_Y, _X));
+            const double p = std::sqrt(_X * _X + _Y * _Y);
+            if (p < wgsEps) {
+                _lat = toDegrees((_Z >= 0.0) ? 90.0 : -90.0);
+                _alt = std::fabs(_Z) - b;
+            }
+            else {
+                _lat = std::atan2(_Z, p * (1.0 - e2));
+                _alt = 0.0;
+                for (int i = 0; i < 10; ++i) {
+                    const double sinLat = std::sin(toRadians(_lat));
+                    const double N = a / std::sqrt(1.0 - e2 * sinLat * sinLat);
+                    _alt = p / std::cos(_lat) - N;
+                    const double newLat = std::atan((_Z / p) / (1.0 - e2 * N / (N + _alt)));
+                    if (std::abs(newLat - _lat) < wgsEps) break;
+                    _lat = newLat;
+                }
+            }
         }
     };
 
