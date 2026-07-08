@@ -15,14 +15,12 @@ namespace geo {
     public:
         GeoPoint() : lat(0.0), lon(0.0), alt(0.0) {};
         GeoPoint(double latitude, double longitude, double altitude) {
-            if (std::abs(latitude) > 90.0) throw std::invalid_argument("Latitude out of range");
-            if (std::abs(longitude) > 180.0) throw std::invalid_argument("Longitude out of range");
-            if (altitude < 0.0) throw std::invalid_argument("Altitude out of range");
-            lat = latitude;
-            lon = longitude;
-            alt = altitude;
+            setLat(latitude);
+            setLon(longitude);
+            setAlt(altitude);
         };
         double operator-(const GeoPoint& other) const {
+            //Перенести в другой оператор, а здесь сделать смещение вектора
             return distanceTo(other);
         }
 
@@ -38,10 +36,27 @@ namespace geo {
             return !(*this == other);
         }
         
-        double lat;
-        double lon;
-        double alt;
+        void setLat(double latitude) { 
+            if (std::abs(latitude) > 90.0) throw std::invalid_argument("Latitude out of range");
+            lat = latitude; 
+        }
+
+        void setLon(double longitude) { 
+            if (std::abs(longitude) > 180.0) throw std::invalid_argument("Longitude out of range");
+            lon = longitude; 
+        }
+
+        void setAlt(double altitude) { 
+            if (altitude < 0.0) throw std::invalid_argument("Altitude out of range");
+            alt = altitude; 
+        }
+
+        double getLat() const { return lat; }
+        double getLon() const { return lon; }
+        double getAlt() const { return alt; }
     private:
+        double lat, lon, alt;
+
         static double toRadians(double degrees) {
             return degrees * PI / 180.0;
         }
@@ -52,6 +67,7 @@ namespace geo {
 
         double haversineDistance(const GeoPoint& other) const {
             /// @brief Вычисление расстояния по шару с помощью формулы Гаверсинусов
+            //TODO Переделать на WGS84
             double lat1 = toRadians(lat);
             double lon1 = toRadians(lon);
             double lat2 = toRadians(other.lat);
@@ -79,7 +95,7 @@ namespace geo {
         /// @brief Гео-линия из N точек
     public:
         explicit GeoLineString(std::vector<GeoPoint> pts) : points(std::move(pts)) {};
-        const GeoPoint& operator[](size_t index) {
+        const GeoPoint& operator[](size_t index) const {
             if (index >= points.size()) throw std::out_of_range("Index out of range");
             return points[index];
         }
@@ -94,7 +110,7 @@ namespace geo {
         int size() const {
             return points.size();
         }
-        void push_back(GeoPoint& p) {
+        void push_back(const GeoPoint& p) {
             points.push_back(p);
         }
     private:
@@ -122,13 +138,14 @@ namespace geo {
     private:
         bool pointInPolygon(const GeoPoint& p, GeoLineString line) const {
             /// @brief Алгоритм ray-casting проверяет находится ли точка внутри замкнутой линии
+            //TODO Переделать учет переход через -+180 градусов
             bool inside = false;
             for (size_t i = 0, j = line.size() - 1; i < line.size(); j = i++) {
-                if (((line[i].lat > p.lat) != (line[j].lat > p.lat)) &&
-                    (p.lon < (line[j].lon - line[i].lon) * 
-                    (p.lat - line[i].lat) / 
-                    (line[j].lat - line[i].lat) + 
-                    line[i].lon)) {
+                if (((line[i].getLat() > p.getLat()) != (line[j].getLat() > p.getLat())) &&
+                    (p.getLon() < (line[j].getLon() - line[i].getLon()) * 
+                    (p.getLat() - line[i].getLat()) / 
+                    (line[j].getLat() - line[i].getLat()) + 
+                    line[i].getLon())) {
                         inside = !inside;
                 }
             }
