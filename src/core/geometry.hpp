@@ -12,12 +12,21 @@ namespace geo {
     inline constexpr double f  = 1.0 / 298.257223563;
     inline constexpr double b  = a * (1.0 - f);
     inline constexpr double e2 = f * (2.0 - f);
-    inline constexpr double ecefEps = 1e-4;
+    inline constexpr double ecefEps = 1e-6;
     inline constexpr double wgsEps = 1e-12;
     inline constexpr double coincidentEps = 1e-24;
 
+    static double toRadians(double degrees) {
+        return degrees * PI / 180.0;
+    }
+    static double toDegrees(double radians) {
+        return radians * 180.0 / PI;
+    }
+
+    //TODO Нужно разделить точку на ECEF и WGS84 и сделать между ними переход
+    //TODO для сохранения Single Responsibility Principle
     class GeoPoint {
-        /// @brief WGS84 и ECEF координаты
+        /// @brief WGS84 и ECEF координаты. Основная система - ECEF
         /// @concept Одновременное вычисление ECEF и WGS84 координат позволяет избежать больших пересчетов
     public:
         GeoPoint() : _lat(0.0), _lon(0.0), _alt(0.0), _X(0.0), _Y(0.0), _Z(0.0) {
@@ -74,37 +83,55 @@ namespace geo {
             _lat = latitude;
             _alt = altitude;
             //После изменения всех WGS заполняем ECEF
-            //TODO Найти вариант как сделать это преобразование атомарным, чтобы оно не было долгим
             fillECEF();
         }
 
-        void setX(double X) { _X = X; fillWGS(); }
-        void setY(double Y) { _Y = Y; fillWGS(); }
-        void setZ(double Z) { _Z = Z; fillWGS(); }
+        void setX(double X) { _X = X; wgs_valid = false; }
+        void setY(double Y) { _Y = Y; wgs_valid = false; }
+        void setZ(double Z) { _Z = Z; wgs_valid = false; }
         void setECEF(double X, double Y, double Z) {
             _X = X;
             _Y = Y;
-            _Z = Z;
-            //После изменения всех ECEF заполняем WGS
-            fillWGS();
+            _Z = Z; 
+            wgs_valid = false;
         }
 
-        double getLat() const { return _lat; }
-        double getLon() const { return _lon; }
-        double getAlt() const { return _alt; }
+        double getLat() const { 
+            if(!wgs_valid) throw std::logic_error("Координаты WGS не валидны");
+            return _lat; 
+        }
+        double getLon() const { 
+            if(!wgs_valid) throw std::logic_error("Координаты WGS не валидны");
+            return _lon; 
+        }
+        double getAlt() const { 
+            if(!wgs_valid) throw std::logic_error("Координаты WGS не валидны");
+            return _alt; 
+        }
         double getX() const { return _X; }
         double getY() const { return _Y; }
         double getZ() const { return _Z; }
 
-        double distanceTo(const GeoPoint& other) const {
-            /// @brief Расстояние по WGS84
-            //TODO Винценти - тяжелый алгоритм, нужно найти полегче для быстрого рендера
-            double horizontal = vincentyDistance(other);
-            double vertical = other._alt - _alt;
-            return std::sqrt(horizontal * horizontal + vertical * vertical);
-        }
+        double haversineDistance(const GeoPoint& other) const {
+            /// @brief Вычисление расстояния по шару с помощью формулы Гаверсинусов
+            if(!wgs_valid) throw std::logic_error("Координаты WGS не валидны");
+            double lat1 = toRadians(_lat);
+            double lon1 = toRadians(_lon);
+            double lat2 = toRadians(other._lat);
+            double lon2 = toRadians(other._lon);
 
+            double dLat = lat2 - lat1;
+            double dLon = lon2 - lon1;
+
+            double a = std::sin(dLat / 2) * std::sin(dLat / 2) +
+                    std::cos(lat1) * std::cos(lat2) *
+                    std::sin(dLon / 2) * std::sin(dLon / 2);
+
+            double c = 2.0 * std::atan2(std::sqrt(a), std::sqrt(1.0 - a));
+            return a * c;
+        }
         double vincentyDistance(const GeoPoint& other) const {
+            if(!wgs_valid) throw std::logic_error("Координаты WGS не валидны");
             /// @brief Вычисление расстояния по шару с помощью формулы Винценти по WGS84
             double lat1 = toRadians(_lat);
             double lon1 = toRadians(_lon);
@@ -174,30 +201,6 @@ namespace geo {
             return s;
         }
 
-    private:
-        //WGS84 coords
-        double _lat, _lon, _alt; 
-        //Geocentric coords
-        double _X, _Y, _Z;
-
-        static double toRadians(double degrees) {
-            return degrees * PI / 180.0;
-        }
-        static double toDegrees(double radians) {
-            return radians * 180.0 / PI;
-        }
-
-        void fillECEF() {
-            /// @brief Заполнение ECEF после изменения WGS84
-            const double sinLat = std::sin(toRadians(_lat));
-            const double cosLat = std::cos(toRadians(_lat));
-            const double sinLon = std::sin(toRadians(_lon));
-            const double cosLon = std::cos(toRadians(_lon));
-            const double N = a / std::sqrt(1.0 - e2 * sinLat * sinLat);
-            _X = (N + _alt) * cosLat * cosLon;
-            _Y = (N + _alt) * cosLat * sinLon;
-            _Z = (N * (1.0 - e2) + _alt) * sinLat;
-        }
         void fillWGS() {
             /// @brief Заполнение WGS84 после изменения ECEF
             _lon = toDegrees(std::atan2(_Y, _X));
@@ -218,6 +221,28 @@ namespace geo {
                     _lat = newLat;
                 }
             }
+            wgs_valid = true;
+        }
+
+    private:
+        //WGS84 coords
+        double _lat, _lon, _alt; 
+        //Geocentric coords
+        double _X, _Y, _Z;
+        //Флаг, валидны, заполнены ли WGS84 координаты
+        //TODO Должен быть сделан mutex для флага, который будет показывать другим тредам состояние объекта
+        bool wgs_valid = false;
+
+        void fillECEF() {
+            /// @brief Заполнение ECEF после изменения WGS84
+            const double sinLat = std::sin(toRadians(_lat));
+            const double cosLat = std::cos(toRadians(_lat));
+            const double sinLon = std::sin(toRadians(_lon));
+            const double cosLon = std::cos(toRadians(_lon));
+            const double N = a / std::sqrt(1.0 - e2 * sinLat * sinLat);
+            _X = (N + _alt) * cosLat * cosLon;
+            _Y = (N + _alt) * cosLat * sinLon;
+            _Z = (N * (1.0 - e2) + _alt) * sinLat;
         }
     };
 
@@ -233,7 +258,7 @@ namespace geo {
             double dist = 0.0;
 
             for (size_t i = 1; i < points.size(); ++i) {
-                dist = dist + points[i].distanceTo(points[i - 1]);
+                dist = dist + points[i].haversineDistance(points[i - 1]);
             }
             return dist;
         };
@@ -267,28 +292,45 @@ namespace geo {
         };
     private:
         bool pointInPolygon(const GeoPoint& p, const GeoLineString& line) const {
-            /// @brief Алгоритм ray-casting проверяет находится ли точка внутри замкнутой линии
+            if (line.size() < 3) return false;
+
             bool inside = false;
-            auto normLon = [](double lon) -> double {
-                return (lon < 0.0) ? lon + 360.0 : lon;
-            };
             double pLat = p.getLat();
-            double pLonNorm = normLon(p.getLon());
+            double pLon = p.getLon();
+
+            auto normalizeLon = [](double lon) -> double {
+                lon = std::fmod(lon, 360.0);
+                if (lon <= -180.0) lon += 360.0;
+                else if (lon > 180.0) lon -= 360.0;
+                return lon;
+            };
+            //TODO Возможно распараллеливание по thread - если размер линии больше 30, то половиним и запускаем рекурсивно
             for (size_t i = 0, j = line.size() - 1; i < line.size(); j = i++) {
                 double lat_i = line[i].getLat();
                 double lat_j = line[j].getLat();
+
                 if (((lat_i > pLat) != (lat_j > pLat))) {
-                    double lon_i = normLon(line[i].getLon());
-                    double lon_j = normLon(line[j].getLon());
+                    double lon_i = normalizeLon(line[i].getLon() - pLon);
+                    double lon_j = normalizeLon(line[j].getLon() - pLon);
+
+                    double dlon = lon_j - lon_i;
+                    if (dlon > 180.0) {
+                        lon_j -= 360.0;
+                    } else if (dlon < -180.0) {
+                        lon_j += 360.0;
+                    }
+
                     double x_intersect;
                     double denom = lat_j - lat_i;
                     if (std::abs(denom) < wgsEps) {
                         x_intersect = lon_i;
                     } else {
-                        x_intersect = lon_i + (lon_j - lon_i) *
-                                    (pLat - lat_i) / denom;
+                        x_intersect = lon_i + (lon_j - lon_i) * (pLat - lat_i) / denom;
                     }
-                    if (pLonNorm < x_intersect) {
+
+                    x_intersect = normalizeLon(x_intersect);
+
+                    if (0.0 < x_intersect) {
                         inside = !inside;
                     }
                 }
