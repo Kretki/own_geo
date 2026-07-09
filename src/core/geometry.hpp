@@ -23,58 +23,57 @@ namespace geo {
         return radians * 180.0 / PI;
     }
 
-    //TODO Нужно разделить точку на ECEF и WGS84 и сделать между ними переход
-    //TODO для сохранения Single Responsibility Principle
-    class GeoPoint {
-        /// @brief WGS84 и ECEF координаты. Основная система - ECEF
-        /// @concept Одновременное вычисление ECEF и WGS84 координат позволяет избежать больших пересчетов
+    class GeoPointECEF {
     public:
-        GeoPoint() : _lat(0.0), _lon(0.0), _alt(0.0), _X(0.0), _Y(0.0), _Z(0.0) {
-            /// @brief Основной конструктор - по-умолчанию
-            fillECEF();
-        };
-        static GeoPoint fromWGS(double latitude, double longitude, double altitude) {
-            /// @brief Создание по WGS84 с автоматическим заполнением ECEF
-            auto p = GeoPoint();
-            p.setWGS(latitude, longitude, altitude);
-            return p;
-        };
-        static GeoPoint fromECEF(double X, double Y, double Z) {
-            /// @brief Создание по ECEF с автоматическим заполнением WGS84
-            auto p = GeoPoint();
-            p.setECEF(X, Y, Z);
-            return p;
-        }
+        GeoPointECEF() : _X(0.0), _Y(0.0), _Z(0.0) {}
+        GeoPointECEF(double X, double Y, double Z) : _X(X), _Y(Y), _Z(Z) {}
 
-        GeoPoint operator-(const GeoPoint& other) const {
+        GeoPointECEF operator-(const GeoPointECEF& other) const {
             /// @brief Разность векторов в ECEF
-            return GeoPoint::fromECEF(_X - other._X, _Y - other._Y, _Z - other._Z);
+            return GeoPointECEF(_X - other._X, _Y - other._Y, _Z - other._Z);
         }
-        bool operator==(const GeoPoint& other) const {
+        bool operator==(const GeoPointECEF& other) const {
             /// @brief Сравнение точек
             /// @important помним про то, что double может не равняться точно
             return (std::abs(_X - other._X) < ecefEps) &&
                    (std::abs(_Y - other._Y) < ecefEps) &&
                    (std::abs(_Z - other._Z) < ecefEps);
         }
-        bool operator!=(const GeoPoint& other) const {
+        bool operator!=(const GeoPointECEF& other) const {
             /// @brief Сравнение точек
             return !(*this == other);
         }
-        
+
+        void setX(double X) { _X = X; }
+        void setY(double Y) { _Y = Y; }
+        void setZ(double Z) { _Z = Z; }
+        void setECEF(double X, double Y, double Z) {
+            _X = X;
+            _Y = Y;
+            _Z = Z; 
+        }
+        double getX() const { return _X; }
+        double getY() const { return _Y; }
+        double getZ() const { return _Z; }
+    private:
+        //Geocentric coords
+        double _X, _Y, _Z;
+    };
+
+    class GeoPointWGS {
+    public:
+        GeoPointWGS() : _lat(0.0), _lon(0.0), _alt(0.0) {}
+
         void setLat(double latitude) { 
             if (std::abs(latitude) > 90.0) throw std::invalid_argument("Latitude out of range");
             _lat = latitude;
-            fillECEF();
         }
         void setLon(double longitude) { 
             if (std::abs(longitude) > 180.0) throw std::invalid_argument("Longitude out of range");
             _lon = longitude;
-            fillECEF();
         }
         void setAlt(double altitude) {
             _alt = altitude;
-            fillECEF();
         }
         void setWGS(double latitude, double longitude, double altitude) {
             if (std::abs(latitude) > 90.0) throw std::invalid_argument("Latitude out of range");
@@ -82,39 +81,14 @@ namespace geo {
             _lon = longitude;
             _lat = latitude;
             _alt = altitude;
-            //После изменения всех WGS заполняем ECEF
-            fillECEF();
         }
 
-        void setX(double X) { _X = X; wgs_valid = false; }
-        void setY(double Y) { _Y = Y; wgs_valid = false; }
-        void setZ(double Z) { _Z = Z; wgs_valid = false; }
-        void setECEF(double X, double Y, double Z) {
-            _X = X;
-            _Y = Y;
-            _Z = Z; 
-            wgs_valid = false;
-        }
+        double getLat() const { return _lat; }
+        double getLon() const { return _lon; }
+        double getAlt() const { return _alt; }
 
-        double getLat() const { 
-            if(!wgs_valid) throw std::logic_error("Координаты WGS не валидны");
-            return _lat; 
-        }
-        double getLon() const { 
-            if(!wgs_valid) throw std::logic_error("Координаты WGS не валидны");
-            return _lon; 
-        }
-        double getAlt() const { 
-            if(!wgs_valid) throw std::logic_error("Координаты WGS не валидны");
-            return _alt; 
-        }
-        double getX() const { return _X; }
-        double getY() const { return _Y; }
-        double getZ() const { return _Z; }
-
-        double haversineDistance(const GeoPoint& other) const {
+        double haversineDistance(const GeoPointWGS& other) const {
             /// @brief Вычисление расстояния по шару с помощью формулы Гаверсинусов
-            if(!wgs_valid) throw std::logic_error("Координаты WGS не валидны");
             double lat1 = toRadians(_lat);
             double lon1 = toRadians(_lon);
             double lat2 = toRadians(other._lat);
@@ -130,8 +104,7 @@ namespace geo {
             double c = 2.0 * std::atan2(std::sqrt(a), std::sqrt(1.0 - a));
             return a * c;
         }
-        double vincentyDistance(const GeoPoint& other) const {
-            if(!wgs_valid) throw std::logic_error("Координаты WGS не валидны");
+        double vincentyDistance(const GeoPointWGS& other) const {
             /// @brief Вычисление расстояния по шару с помощью формулы Винценти по WGS84
             double lat1 = toRadians(_lat);
             double lon1 = toRadians(_lon);
@@ -200,57 +173,62 @@ namespace geo {
             double s = b * A * (sigma - deltaSigma);
             return s;
         }
-
-        void fillWGS() {
-            /// @brief Заполнение WGS84 после изменения ECEF
-            _lon = toDegrees(std::atan2(_Y, _X));
-            const double p = std::sqrt(_X * _X + _Y * _Y);
-            if (p < wgsEps) {
-                _lat = toDegrees((_Z >= 0.0) ? 90.0 : -90.0);
-                _alt = std::fabs(_Z) - b;
-            }
-            else {
-                _lat = std::atan2(_Z, p * (1.0 - e2));
-                _alt = 0.0;
-                for (int i = 0; i < 10; ++i) {
-                    const double sinLat = std::sin(toRadians(_lat));
-                    const double N = a / std::sqrt(1.0 - e2 * sinLat * sinLat);
-                    _alt = p / std::cos(_lat) - N;
-                    const double newLat = std::atan((_Z / p) / (1.0 - e2 * N / (N + _alt)));
-                    if (std::abs(newLat - _lat) < wgsEps) break;
-                    _lat = newLat;
-                }
-            }
-            wgs_valid = true;
-        }
-
+    
     private:
         //WGS84 coords
         double _lat, _lon, _alt; 
-        //Geocentric coords
-        double _X, _Y, _Z;
-        //Флаг, валидны, заполнены ли WGS84 координаты
-        //TODO Должен быть сделан mutex для флага, который будет показывать другим тредам состояние объекта
-        bool wgs_valid = false;
+    };
 
-        void fillECEF() {
-            /// @brief Заполнение ECEF после изменения WGS84
-            const double sinLat = std::sin(toRadians(_lat));
-            const double cosLat = std::cos(toRadians(_lat));
-            const double sinLon = std::sin(toRadians(_lon));
-            const double cosLon = std::cos(toRadians(_lon));
+    //Нужно ли переделывать все на указатели???    
+
+    class GeoConverter {
+    public:
+        GeoPointWGS toWGS(GeoPointECEF& pEcef) {
+            auto pWgs = GeoPointWGS();
+            double X = pEcef.getX();
+            double Y = pEcef.getY();
+            double Z = pEcef.getZ();
+            pWgs.setLon(toDegrees(std::atan2(Y, X)));
+            const double p = std::sqrt(X * X + Y * Y);
+            if (p < wgsEps) {
+                pWgs.setLat(toDegrees((Z >= 0.0) ? 90.0 : -90.0));
+                pWgs.setAlt(std::fabs(Z) - b);
+            }
+            else {
+                double lat = std::atan2(Z, p * (1.0 - e2));
+                double alt = 0.0;
+                for (int i = 0; i < 10; ++i) {
+                    const double sinLat = std::sin(toRadians(lat));
+                    const double N = a / std::sqrt(1.0 - e2 * sinLat * sinLat);
+                    alt = p / std::cos(lat) - N;
+                    const double newLat = std::atan((Z / p) / (1.0 - e2 * N / (N + alt)));
+                    if (std::abs(newLat - lat) < wgsEps) break;
+                    lat = newLat;
+                }
+                pWgs.setLat(lat);
+                pWgs.setAlt(alt);
+            }
+            return pWgs;
+        }
+
+        void toECEF(GeoPointWGS& pWgs) {
+            auto pEcef = GeoPointECEF();
+            const double sinLat = std::sin(toRadians(pWgs.getLat()));
+            const double cosLat = std::cos(toRadians(pWgs.getLat()));
+            const double sinLon = std::sin(toRadians(pWgs.getLon()));
+            const double cosLon = std::cos(toRadians(pWgs.getLon()));
             const double N = a / std::sqrt(1.0 - e2 * sinLat * sinLat);
-            _X = (N + _alt) * cosLat * cosLon;
-            _Y = (N + _alt) * cosLat * sinLon;
-            _Z = (N * (1.0 - e2) + _alt) * sinLat;
+            pEcef.setX((N + pWgs.getAlt()) * cosLat * cosLon);
+            pEcef.setY((N + pWgs.getAlt()) * cosLat * sinLon);
+            pEcef.setZ((N * (1.0 - e2) + pWgs.getAlt()) * sinLat);
         }
     };
 
     class GeoLineString {
         /// @brief Гео-линия из N точек
     public:
-        explicit GeoLineString(std::vector<GeoPoint> pts) : points(std::move(pts)) {};
-        const GeoPoint& operator[](size_t index) const {
+        explicit GeoLineString(std::vector<GeoPointWGS> pts) : points(std::move(pts)) {};
+        const GeoPointWGS& operator[](size_t index) const {
             if (index >= points.size()) throw std::out_of_range("Index out of range");
             return points[index];
         }
@@ -265,17 +243,17 @@ namespace geo {
         int size() const {
             return points.size();
         }
-        void push_back(const GeoPoint& p) {
+        void push_back(const GeoPointWGS& p) {
             points.push_back(p);
         }
     private:
-        std::vector<GeoPoint> points;
+        std::vector<GeoPointWGS> points;
     };
 
     class GeoPolygon {
         /// @brief Гео-полигон, фигура с внешним контуром и внутренними непересекающимися контурами
     public:
-        bool contains(const GeoPoint& p) const {
+        bool contains(const GeoPointWGS& p) const {
             if (!isValid()) return false;
             if (!pointInPolygon(p, outerRing)) return false;
             for (auto innerRing : innerRings) {
@@ -291,7 +269,7 @@ namespace geo {
             return true;
         };
     private:
-        bool pointInPolygon(const GeoPoint& p, const GeoLineString& line) const {
+        bool pointInPolygon(const GeoPointWGS& p, const GeoLineString& line) const {
             if (line.size() < 3) return false;
 
             bool inside = false;
@@ -344,7 +322,7 @@ namespace geo {
 
     class GeoFeature {
         /// @brief Инкапсулирует гео-данные и мета-данные
-        std::variant<GeoPoint, GeoLineString, GeoPolygon> geometry;
+        std::variant<GeoPointWGS, GeoLineString, GeoPolygon> geometry;
         std::unordered_map<std::string, std::variant<std::string, double, int>> properties;
     };
 }
